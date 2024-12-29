@@ -1,0 +1,357 @@
+---
+title: "Teste técnico PAGOZ"
+author: "Lucas Cardoso de Menezes"
+date: "12/05/2024"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Contexto:
+
+O time de vendas de uma empresa do setor de meios de pagamentos deseja levantar algumas informações das transações realizadas. Várias tabelas em formatos diferentes foram enviadas, será necessário que o time de dados adeque as informações e agregue os dados a tabela principal "transacoes.csv" e realize algumas análises para o time de vendas.
+
+# Proposta:
+
+Através dos dados diponibilizados, realizar as análises utilizando script R, explorando as informações e demonstrando a análise para o usuário.
+
+## Análises obrigatórias solicitadas:
+
+1.1.  Qual estabelecimento movimentou o cógido api CAOD9ND23H4B7ZCMGWXAN47Z8KEWAF5W?
+
+1.2.  Quantas vendas em cartão de crédito foram realizadas entre a data 2022-01-18 e 2023-02-01?
+
+2.  Quais são os clientes com maior valor de faturamento? (Identificados na coluna "estabelecimento")
+
+3.  Quantas máquinas cada cliente possui?
+
+4.  Qual o valor total em "eventos" negativos?
+
+5.  Qual a porcentagem de vendas com "Leitor de chip e senha" em relação a "Venda pela Maquininha"? Em número de transações e valor de faturamento total.
+
+6.  Precisamos de um gráfico que demonstre o faturamento total por parcelas.
+
+7.  Gráfico com a razão de transações débito, crédito e parcelado.
+
+# Preparando o ambiente para à análise:
+
+Para realizar essa análise contaremos com o uso de algumas bibliotecas do R, os principais serão o *dplyr* e o *RSQLite*. Um para auxiliar na manipulação das tabelas e o outro será utilizado para a montagem dos bancos de dados.
+
+Os pacotes estão disponíveis em:
+
+-   dplyr: <https://cran.r-project.org/web/packages/dplyr/index.html>
+-   RSQLite: <https://cran.r-project.org/web/packages/RSQLite/index.html>
+-   data.table: <https://cran.r-project.org/web/packages/data.table/index.html>
+-   readxl: <https://cran.r-project.org/web/packages/readxl/index.html>
+-   plotly: <https://cran.r-project.org/web/packages/plotly/index.html>
+-   stringr: <https://cran.r-project.org/web/packages/stringr/index.html>
+
+Ou utilizando os comandos:
+
+```{r echo=TRUE}
+# install.packages("dplyr")
+# install.packages("RSQLite")
+# install.packages("data.table")
+# install.packages("readxl")
+# install.packages("stringr")
+# install.packages("plotly")
+```
+
+Vamos utilizar o *libary* para chamar os pacotes após a instalação:
+
+```{r echo=TRUE, message=FALSE}
+library(data.table)
+library(readxl)
+library(dplyr)
+library(stringr)
+library(RSQLite)
+library(plotly)
+```
+
+Para finalizarmos a preparação do ambiente devemos informar o local onde se encontra os dados de entrada:
+
+```{r echo=TRUE, message=FALSE}
+#setwd(dir = "...Tabelas/")
+```
+
+#Programação em R
+
+## 1. Leitura e montagem dos dados
+
+Para leitura do dados utilizaremos o pacote data.table, que possuí a função *fread()*, uma das funções mais perfomáticas para leitura de arquivos csv/txt, utilizaremos também o pacote reaxl para ler os arquivos de extensão xls/xlsx.
+
+```{r echo=TRUE, message=FALSE}
+#Dados auxilaires ----
+
+leitor <- data.table::fread(
+  file = paste0(getwd(), "/Tabelas/leitor.csv"), sep = ",", encoding = "UTF-8"
+) %>% 
+  dplyr::rename("descricao_leitor" = "descricao")
+
+head(leitor)
+
+captura <- data.table::fread(
+  file = paste0(getwd(), "/Tabelas/captura.csv"), sep = ",", encoding = "UTF-8"
+) %>% 
+  dplyr::rename("descricao_captura" = "descricao")
+
+head(captura)
+
+pagamento <- data.table::fread(
+  file = paste0(getwd(), "/Tabelas/pagamento.csv"), encoding = "Latin-1"
+) %>% 
+  dplyr::rename("descricao_pagamento" = "descricao")
+
+head(pagamento)
+
+status_pagamento <- data.table::fread(
+  file = paste0(getwd(), "/Tabelas/status_pagamento.csv"), encoding = "Latin-1"
+) %>% 
+  dplyr::rename("descricao_status_pagamento" = "descricao")
+
+head(status_pagamento)
+
+canal_entrada <- readxl::read_xls(
+  path = paste0(getwd(), "/Tabelas/canal_entrada.xls")
+) %>% 
+  dplyr::rename("descricao_canal_entrada" = "descricao")
+
+head(canal_entrada)
+
+evento <- readxl::read_xlsx(
+  path = paste0(getwd(), "/Tabelas/evento.xlsx")
+) %>% 
+  dplyr::rename("descricao_evento" = "descricao")
+
+head(evento)
+
+#Dado principal ----
+
+transacoes <- data.table::fread(
+  file = paste0(getwd(), "/Tabelas/transacoes.csv"), encoding = "Latin-1"
+)
+
+colnames(transacoes)
+```
+
+Após ler cada tabela auxiliar, também utilizamos a função *rename()* para renomear as coluna descrição de cada uma delas para um nome mais especifico, com o intuito de futuramente ao realizar a junção das tabelas auxilaires com a tabela princiapal não haver confusão com as nomenclaturas dos dados.
+
+Traçando um paralelo com o processo de leitura dos arquivos, via função de exportação do Excel, observa-se que, em comparação com as leituras realizadas via as funções supracitadas, não tivemos que nos preocupar com ajustes do separadores e delimitadores que seriam necessárias para que o dado estivese disponível para uso sem erro nas informações da coluna. Já que as próprias funções realizam esses ajustes de forma nativa.
+
+Após a leitura de todas as tabelas, vamos realizar a junção dos dados pelas colunas de chave primária de cada tabela:
+
+```{r echo=TRUE, message=FALSE}
+#Join entre as tabelas ----
+
+transacoes <- transacoes %>% 
+  dplyr::left_join(leitor, by = c("leitor" = "# leitor")) %>%  
+  dplyr::left_join(captura, by = c("meio_captura" = "# meio_captura")) %>% 
+  dplyr::left_join(pagamento, by = c("meio_pagamento" = "# meio_pagamento")) %>% 
+  dplyr::left_join(status_pagamento, by = c("status_pagamento" = "# status_pagamento")) %>% 
+  dplyr::left_join(canal_entrada, by = c("canal_entrada" = "# canal_entrada")) %>%
+  dplyr::left_join(evento, by = c("tipo_evento" = "# tipo_evento"))
+```
+
+Utilizando a função *left_join()*, é possível juntar as  tabelas auxiliares com a tabela princiapl através das colunas chave. Se observarmos agora, a tabela transações já contém os dados agregados das tabelas auxiliares:
+
+```{r echo=TRUE, message=FALSE}
+colnames(transacoes)
+```
+
+## 2. Análise e resoluções das questões
+
+### Qual estabelecimento movimentou o cógido api CAOD9ND23H4B7ZCMGWXAN47Z8KEWAF5W?
+
+Para resolução dessa questão, basta filtrarmos a coluna "# movimento_api_codigo" utilizando a função *subset*, buscando pelo código passado na questão, selecionar as colunas "# movimento_api_codigo" e "estabelecimento" e por fim imprimir o resultado do filtro.
+
+```{r echo=TRUE, message=FALSE}
+questao_um <- transacoes %>% 
+  subset(`# movimento_api_codigo` == "CAOD9ND23H4B7ZCMGWXAN47Z8KEWAF5W") %>% 
+  dplyr::select(`# movimento_api_codigo`, estabelecimento) %>% 
+  print()
+```
+
+### Quantas vendas em cartão de crédito foram realizadas entre a data 2022-01-18 e 2023-02-01?
+
+Para chegar nesse quantitativo, primeiro iremos criar uma nova coluna na tabela, denominada "data_venda_ajuste_num", que irá receber os dados da coluna "data_venda_ajuste", porém retirando o caractere traço (-). Para isso, utilizamos a função *str_remove_all* que remove strings de um determinando campo. Em seguida, bastou filtrar as vendas que ocoreram entre os périodos solicitados e que eram do tipo "Cartão de Crédito", por fim realizar a contagem de linhas retornadas.
+
+```{r echo=TRUE, message=FALSE}
+questao_um_ <- transacoes %>% 
+  dplyr::mutate(
+    data_venda_ajuste_num = as.numeric( str_remove_all( data_venda_ajuste, "-" ) )
+    ) %>% 
+  subset(
+    data_venda_ajuste_num > 20220117 & data_venda_ajuste_num < 20230131 & descricao_pagamento == "Cartão de Crédito"
+  ) %>% 
+  dplyr::count() %>% print()
+```
+
+### Quais são os clientes com maior valor de faturamento? (Identificados na coluna "estabelecimento")
+
+Para isso, agrupamos os dados pela coluna "estabelecimento" utilizando a função *group_by*, criamos uma nova coluna que seria a soma da coluna "valor_total_transacao", como os dados estão agrupados será realizada a soma por cada estabelecimento, depois selecionamos apenas as colunas pertinentes para o resultado final e ordenamos a base de forma decrescente utilizando a função *arrange*, com o parâmetro "desc()", pegamos somente os primeiros dados (os maiores faturamentos) e imprimimos na tela o resultado.
+
+```{r echo=TRUE, message=FALSE}
+questao_dois <- transacoes %>% 
+  dplyr::group_by(estabelecimento) %>% 
+  dplyr::mutate(faturamento_por_estabelecimento = sum(valor_total_transacao)) %>% 
+  dplyr::select(estabelecimento, faturamento_por_estabelecimento) %>%
+  dplyr::arrange(desc(faturamento_por_estabelecimento)) %>% 
+  head() %>% print()
+```
+
+### Quantas máquinas cada cliente possui?
+
+Está questão que antes era um desafio operacional que gastava algum tempo para ser realizada, pode ser respondida de forma simples utilizando o código a seguir.
+
+Primeiro, selecionamos apenas as colunas: "estabelecimento" e "descricao_leitor", após isso, utilizando a função *unique()* removemos as repetições na base, assim teremos os estabelecimentos com uma unica ocorrência por tipo de maquininha. Agrupamos por estabelecimentos e criamos uma nova coluna que terá o número de maquininhas que cada cliente possuí ou o *length()* do grupo. E imprimos na tela o resultado.
+
+Para ter algo mais enxuto, seleciono apenas as colunas: "estabelecimento" e "n_maquininha", para termos o consolidado da quantidade de maquininhas por cliente.
+
+```{r echo=TRUE, message=FALSE}
+questao_tres <- transacoes %>% 
+  dplyr::select(estabelecimento, descricao_leitor) %>% 
+  unique() %>% 
+  dplyr::group_by(estabelecimento) %>% 
+  dplyr::mutate(
+    n_maquininha = length(estabelecimento)
+  ) %>% print()
+```
+
+```{r echo=TRUE, message=FALSE}
+questao_tres_ <- questao_tres %>% 
+  dplyr::select(estabelecimento, n_maquininha) %>% 
+  unique() %>% print()
+```
+
+Para fins ilustrativos, decido ordenar essa tabela pelo quanittativo de maquininhas.
+
+```{r echo=TRUE, message=FALSE}
+questao_tres_ <- questao_tres_ %>% 
+  arrange(desc(n_maquininha)) %>% 
+  head() %>% print()
+```
+
+### Qual a porcentagem de vendas com "Leitor de chip e senha" em relação a "Venda pela Maquininha"? Em número de transações e valor de faturamento total.
+
+Para alcançar os valores desejados, precisaremos primeiro filtrar de nossa tabela, as transações que o canal de entrada foram: "Leitor de chip e senha" e "Venda pela Maquininha". Após isso, agrupar por canal de entrada e contar a quantidade de transações para cada tipo de canal e a soma do faturamento.
+
+```{r echo=TRUE, message=FALSE}
+questao_cinco <- transacoes %>% 
+  subset(
+    descricao_canal_entrada == "Venda com leitor de chip e senha" |
+    descricao_canal_entrada == "Venda pela Maquininha"
+    ) %>% 
+  dplyr::group_by(canal_entrada) %>% 
+  dplyr::mutate(
+    n_transacoes = length( descricao_canal_entrada ),
+    sum_faturamento = sum( valor_total_transacao )
+  ) %>% 
+  dplyr::select(descricao_canal_entrada, n_transacoes, sum_faturamento) %>% 
+  unique() %>% dplyr::ungroup() %>% print()
+```
+
+Levantando esses valores, basta calcular a porcentagem de vendas em relação de um canal com o outro.
+
+```{r echo=TRUE, message=FALSE}
+questao_cinco_ <- questao_cinco %>% 
+  dplyr::mutate(
+    
+    percent_num_transacoes = 
+      n_transacoes[descricao_canal_entrada == "Venda com leitor de chip e senha"]/
+      n_transacoes[descricao_canal_entrada == "Venda pela Maquininha"]*100,
+    
+    percent_total_vendas = 
+      sum_faturamento[descricao_canal_entrada == "Venda com leitor de chip e senha"]/
+      sum_faturamento[descricao_canal_entrada == "Venda pela Maquininha"]*100
+    
+  ) %>% 
+  dplyr::select(percent_num_transacoes, percent_total_vendas) %>% 
+  unique() %>% print()
+```
+
+### Precisamos de um gráfico que demonstre o faturamento total por parcelas.
+
+Para os gráficos, iremos utilizar o pacote *plotly* que permite a plotagem de gráficos interativos.
+
+Primeiro precisaremos preparar os dados que serão utilizados no gráfico, para isso selecionamos apenas as coluans "quantidade_parcela" e "valor_total_tansacao", agrupamos pela qunatidade de parcelas e realizamos a soma do valor total de transações, tendo então uma coluna com o valor de faturamento por parcela.
+
+```{r echo=TRUE, message=FALSE}
+questao_seis <- transacoes %>% 
+  dplyr::select(quantidade_parcela, valor_total_transacao) %>% 
+  dplyr::group_by(quantidade_parcela) %>% 
+  dplyr::mutate(
+    valor_por_parcela = sum(valor_total_transacao)
+  ) %>% 
+  dplyr::select(quantidade_parcela, valor_por_parcela) %>% 
+  dplyr::ungroup() %>% unique() %>% 
+  dplyr::arrange(quantidade_parcela) %>% 
+  print()
+```
+
+Agora que os dados estão prontos basta montar o gráfico, que é montado de forma simples, basta indicar o dado qeu será utilizado, após isso chamar a função *plotly* e indicar os valores que preencheram os eixos, informar o tipo de gráfico e o modo.
+
+```{r echo=TRUE, message=FALSE}
+plot_faturameto_parcela <- questao_seis %>% 
+  plotly::plot_ly(
+    x = ~quantidade_parcela,
+    y = ~valor_por_parcela,
+    type = "scatter",
+    mode = "lines+markers"
+  )
+```
+
+Montado o gráfico basta chama-lo para que ele seja imprimido.
+
+```{r echo=TRUE, message=FALSE}
+plot_faturameto_parcela
+```
+
+### Gráfico com a razão de transações débito, crédito e parcelado.
+
+Para essa questão, vamos verificar a quantidade de dados qeu estarão presentes em cada filtro, por exemplo: A quantidade de dados que tem como meio de pagamento o id oito (8), ou seja que são meio de pagamento do tipo cartão de débito. Levantando esses valores será possível calcular a razão de cada grupo em relação ao total de transações.
+
+```{r echo=TRUE, message=FALSE}
+questao_sete <- transacoes %>% 
+  dplyr::mutate(
+    transacoes_debito = nrow(transacoes[meio_pagamento == 8 & quantidade_parcela  < 2]),
+    transacoes_credito = nrow(transacoes[meio_pagamento == 3 & quantidade_parcela  < 2]),
+    transacoes_parcelado = nrow(transacoes[quantidade_parcela  > 1]),
+    total_transacoes = nrow(transacoes)
+  ) %>% 
+  select(transacoes_debito, transacoes_credito, transacoes_parcelado, total_transacoes) %>% 
+  unique() %>% print()
+```
+
+Agora tendo levantado esses valores, vamos montar uma tabela, utilizando a função *data.frame*, vamos montar uma tabela, com os tipos de transação e as razões de cada uma.
+
+```{r echo=TRUE, message=FALSE}
+questao_sete_ <- data.frame(
+  tipo_transacao = c(
+    "debito", 
+    "credito", 
+    "parcelado"
+  ),
+  razao = c(
+    questao_sete$transacoes_debito/questao_sete$total_transacoes, 
+    questao_sete$transacoes_credito/questao_sete$total_transacoes, 
+    questao_sete$transacoes_parcelado/questao_sete$total_transacoes
+  )
+) %>% print()
+```
+
+Por fim, montar o gráfico:
+
+```{r echo=TRUE, message=FALSE}
+plot_razao_tipo_transacao <- questao_sete_ %>% 
+  plotly::plot_ly(
+    labels = ~tipo_transacao,
+    values= ~razao,
+    type = "pie"
+  )
+
+plot_razao_tipo_transacao
+```
+
+# Conclusão
+
+Tecnologia e informação, andam juntas para que as estratégias sejam eficazes, como proposta, foi realizada esta resolução das questões apresentadas nesse teste, porém não feitas em Excel e sim utilizando os recursos tecnológicos da programação, com intuito de trazer à tona essa reflexão: Quão eficaz é manter a utilização de ferramentas como planilhas eletrônicas para análises complexas e rotinerias? Sendo que a tecnologia nos oferce agilidade e praticidade nesses trabalhos.
